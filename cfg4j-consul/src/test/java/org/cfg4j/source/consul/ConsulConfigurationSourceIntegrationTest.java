@@ -148,6 +148,14 @@ public class ConsulConfigurationSourceIntegrationTest {
     assertThat(source.getConfiguration(environment)).contains(MapEntry.entry("featureA.toggle", "disabled"));
   }
 
+	@Test
+	public void getConfigurationWithDefaultEnvironmentReturnsAllKeys() {
+		Environment environment = new DefaultEnvironment();
+
+		assertThat(source.getConfiguration(environment)).contains(MapEntry.entry("us-west-1.featureA.toggle", "disabled"));
+		assertThat(source.getConfiguration(environment)).contains(MapEntry.entry("us-west-2.featureB.toggle", "disabled"));
+	}
+
   @Test
   public void getConfigurationShouldIgnoreLeadingSlashInGivenEnvironment() throws Exception {
     Environment environment = new ImmutableEnvironment("/us-west-1");

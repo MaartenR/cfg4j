@@ -81,7 +81,11 @@ class ConsulConfigurationSource implements ConfigurationSource {
 		}
 
 		for (Map.Entry<String, String> entry : consulValues.entrySet()) {
-			String key = entry.getKey().substring(path.length()).replace("/", ".");
+			String key = entry.getKey();
+			if(key.startsWith(path)) {
+				key = key.substring(path.length());
+			}
+			key = key.replace("/", ".");
 			key = key.startsWith(".") ? key.substring(1) : key;
 
 			properties.put(key, entry.getValue());
