@@ -18,8 +18,8 @@
 buildscript {
 
     ext {
-        artifactGroup = "org.cfg4j"
-        artifactVersion = "4.4.1"
+        artifactGroup = "nl.serviceplanet.cfg4j"
+        artifactVersion = "4.4.2-SNAPSHOT"
     }
 
     repositories {

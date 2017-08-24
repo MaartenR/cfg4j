@@ -15,8 +15,7 @@
  */
 package org.cfg4j.source.consul;
 
-import static java.util.Objects.requireNonNull;
-
+import com.google.common.collect.ImmutableMap;
 import com.google.common.net.HostAndPort;
 import com.orbitz.consul.Consul;
 import com.orbitz.consul.KeyValueClient;
@@ -27,10 +26,12 @@ import org.cfg4j.source.context.environment.Environment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * Note: use {@link ConsulConfigurationSourceBuilder} for building instances of this class.
@@ -41,8 +42,9 @@ class ConsulConfigurationSource implements ConfigurationSource {
 
   private static final Logger LOG = LoggerFactory.getLogger(ConsulConfigurationSource.class);
 
+	private final Map<String, Map<String, String>> configPerEnvironment = new ConcurrentHashMap<>();
+
   private KeyValueClient kvClient;
-  private Map<String, String> consulValues;
   private final String host;
   private final int port;
   private boolean initialized;
@@ -70,24 +72,22 @@ class ConsulConfigurationSource implements ConfigurationSource {
       throw new IllegalStateException("Configuration source has to be successfully initialized before you request configuration.");
     }
 
-    Properties properties = new Properties();
-    String path = environment.getName();
+		Properties properties = new Properties();
+		String path = formatPathToConsulKeyPrefix(environment.getName());
 
-    if (path.startsWith("/")) {
-      path = path.substring(1);
-    }
+		Map<String, String> consulValues = configPerEnvironment.get(path);
+		if(consulValues == null) {
+			consulValues = load(path);
+		}
 
-    if (path.length() > 0 && !path.endsWith("/")) {
-      path = path + "/";
-    }
+		for (Map.Entry<String, String> entry : consulValues.entrySet()) {
+			String key = entry.getKey().substring(path.length()).replace("/", ".");
+			key = key.startsWith(".") ? key.substring(1) : key;
 
-    for (Map.Entry<String, String> entry : consulValues.entrySet()) {
-      if (entry.getKey().startsWith(path)) {
-        properties.put(entry.getKey().substring(path.length()).replace("/", "."), entry.getValue());
-      }
-    }
+			properties.put(key, entry.getValue());
+		}
 
-    return properties;
+		return properties;
   }
 
   /**
@@ -98,49 +98,69 @@ class ConsulConfigurationSource implements ConfigurationSource {
     try {
       LOG.info("Connecting to Consul client at " + host + ":" + port);
 
-      Consul consul = Consul.builder().withHostAndPort(HostAndPort.fromParts(host, port)).build();
+			Consul consul = Consul.builder().withHostAndPort(HostAndPort.fromParts(host,port)).build();
 
       kvClient = consul.keyValueClient();
     } catch (Exception e) {
       throw new SourceCommunicationException("Can't connect to host " + host + ":" + port, e);
     }
 
-    reload();
     initialized = true;
   }
 
-  @Override
-  public void reload() {
-    Map<String, String> newConsulValues = new HashMap<>();
-    List<Value> valueList;
+	@Override
+	public void reload() {
+		for(Map.Entry<String, Map<String, String>> entry : configPerEnvironment.entrySet()) {
+			String path = entry.getKey();
+			configPerEnvironment.put(path, load(path));
+		}
+	}
 
-    try {
-      LOG.debug("Reloading configuration from Consuls' K-V store");
-      valueList = kvClient.getValues("/");
-    } catch (Exception e) {
-      throw new SourceCommunicationException("Can't get values from k-v store", e);
-    }
+  private Map<String, String> load(String path) {
+		ImmutableMap.Builder<String, String> newConsulValues = new ImmutableMap.Builder<>();
+		List<Value> valueList;
 
-    for (Value value : valueList) {
-      String val = "";
+		try {
+			LOG.debug("Loading configuration from Consuls' K-V store using base path {}", path);
+			valueList = kvClient.getValues(path);
+		} catch (Exception e) {
+			throw new SourceCommunicationException("Can't get values from k-v store", e);
+		}
 
-      if (value.getValueAsString().isPresent()) {
-        val = value.getValueAsString().get();
-      }
+		for (Value value : valueList) {
+			String val = "";
 
-      LOG.trace("Consul provided configuration key: " + value.getKey() + " with value: " + val);
+			if (value.getValueAsString().isPresent()) {
+				val = value.getValueAsString().get();
+			}
 
-      newConsulValues.put(value.getKey(), val);
-    }
+			LOG.trace("Consul provided configuration key: {} with value: {}", value.getKey(), val);
 
-    consulValues = newConsulValues;
+			newConsulValues.put(value.getKey(), val);
+		}
+
+		Map<String, String> consulValues = newConsulValues.build();
+		configPerEnvironment.put(path, consulValues);
+
+		return consulValues;
   }
 
   @Override
   public String toString() {
     return "ConsulConfigurationSource{" +
-        "consulValues=" + consulValues +
+        "configPerEnvironment=" + configPerEnvironment +
         ", kvClient=" + kvClient +
         '}';
   }
+
+	private static String formatPathToConsulKeyPrefix(String path) {
+		if (path.startsWith("/")) {
+			path = path.substring(1);
+		}
+
+		if(path.length() > 0 && path.endsWith("/")) {
+			path = path.substring(0, path.length() - 1);
+		}
+		return path.isEmpty() ? "/" : path;
+	}
 }
